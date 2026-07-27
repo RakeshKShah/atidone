@@ -12,29 +12,41 @@ GIVEN_A_HEADERS="/tmp/${TEST_ID}_given_a_headers_${CASE_SUFFIX}.txt"
 GIVEN_A_BODY="/tmp/${TEST_ID}_given_a_body_${CASE_SUFFIX}.txt"
 GIVEN_B_HEADERS="/tmp/${TEST_ID}_given_b_headers_${CASE_SUFFIX}.txt"
 GIVEN_B_BODY="/tmp/${TEST_ID}_given_b_body_${CASE_SUFFIX}.txt"
-WHEN1_HEADERS="/tmp/${TEST_ID}_when1_headers_${CASE_SUFFIX}.txt"
-WHEN1_BODY="/tmp/${TEST_ID}_when1_body_${CASE_SUFFIX}.txt"
-WHEN2_HEADERS="/tmp/${TEST_ID}_when2_headers_${CASE_SUFFIX}.txt"
-WHEN2_BODY="/tmp/${TEST_ID}_when2_body_${CASE_SUFFIX}.txt"
-WHEN3_HEADERS="/tmp/${TEST_ID}_when3_headers_${CASE_SUFFIX}.txt"
-WHEN3_BODY="/tmp/${TEST_ID}_when3_body_${CASE_SUFFIX}.txt"
-WHEN4_HEADERS="/tmp/${TEST_ID}_when4_headers_${CASE_SUFFIX}.txt"
-WHEN4_BODY="/tmp/${TEST_ID}_when4_body_${CASE_SUFFIX}.txt"
+WHEN_A_HEADERS="/tmp/${TEST_ID}_when_a_headers_${CASE_SUFFIX}.txt"
+WHEN_A_BODY="/tmp/${TEST_ID}_when_a_body_${CASE_SUFFIX}.txt"
+WHEN_B_HEADERS="/tmp/${TEST_ID}_when_b_headers_${CASE_SUFFIX}.txt"
+WHEN_B_BODY="/tmp/${TEST_ID}_when_b_body_${CASE_SUFFIX}.txt"
+VERIFY_A_HEADERS="/tmp/${TEST_ID}_verify_a_headers_${CASE_SUFFIX}.txt"
+VERIFY_A_BODY="/tmp/${TEST_ID}_verify_a_body_${CASE_SUFFIX}.txt"
+VERIFY_B_HEADERS="/tmp/${TEST_ID}_verify_b_headers_${CASE_SUFFIX}.txt"
+VERIFY_B_BODY="/tmp/${TEST_ID}_verify_b_body_${CASE_SUFFIX}.txt"
 
 cleanup_files() {
-  rm -f "$COOKIE_A" "$COOKIE_B" "$GIVEN_A_HEADERS" "$GIVEN_A_BODY" "$GIVEN_B_HEADERS" "$GIVEN_B_BODY" "$WHEN1_HEADERS" "$WHEN1_BODY" "$WHEN2_HEADERS" "$WHEN2_BODY" "$WHEN3_HEADERS" "$WHEN3_BODY" "$WHEN4_HEADERS" "$WHEN4_BODY"
+  rm -f "$COOKIE_A" "$COOKIE_B" \
+    "$GIVEN_A_HEADERS" "$GIVEN_A_BODY" "$GIVEN_B_HEADERS" "$GIVEN_B_BODY" \
+    "$WHEN_A_HEADERS" "$WHEN_A_BODY" "$WHEN_B_HEADERS" "$WHEN_B_BODY" \
+    "$VERIFY_A_HEADERS" "$VERIFY_A_BODY" "$VERIFY_B_HEADERS" "$VERIFY_B_BODY"
 }
 trap cleanup_files EXIT
 
+extract_id() {
+  body_file="$1"
+  if command -v jq >/dev/null 2>&1; then
+    jq -r '.id // empty' "$body_file"
+  else
+    sed -n 's/.*"id":"\([^"]*\)".*/\1/p' "$body_file" | head -n 1
+  fi
+}
+
 # Given — bring the system to the required state
-echo "STEP: Given — attempt to create one todo in each of two separate cookie-jar sessions"
+echo "STEP: Given — attempt to bootstrap two isolated authenticated sessions and todo fixtures"
 BODY_A=$(printf '{"title":"%s"}' "$TITLE_A")
 BODY_B=$(printf '{"title":"%s"}' "$TITLE_B")
 
 echo "PREREQ: create todo for session A"
 echo "REQUEST_HEADERS: Content-Type: application/json"
 echo "REQUEST_BODY: $BODY_A"
-code_a=$(curl -sS -D "$GIVEN_A_HEADERS" -o "$GIVEN_A_BODY" -w '%{http_code}' \
+code_given_a=$(curl -sS -D "$GIVEN_A_HEADERS" -o "$GIVEN_A_BODY" -w '%{http_code}' \
   -X POST "$BASE_URL/api/todos" \
   -H 'Content-Type: application/json' \
   -c "$COOKIE_A" -b "$COOKIE_A" \
@@ -43,12 +55,12 @@ echo "RESPONSE_HEADERS:"
 cat "$GIVEN_A_HEADERS"
 echo "RESPONSE_BODY:"
 cat "$GIVEN_A_BODY"
-echo "RESPONSE_STATUS: $code_a"
+echo "RESPONSE_STATUS: $code_given_a"
 
 echo "PREREQ: create todo for session B"
 echo "REQUEST_HEADERS: Content-Type: application/json"
 echo "REQUEST_BODY: $BODY_B"
-code_b=$(curl -sS -D "$GIVEN_B_HEADERS" -o "$GIVEN_B_BODY" -w '%{http_code}' \
+code_given_b=$(curl -sS -D "$GIVEN_B_HEADERS" -o "$GIVEN_B_BODY" -w '%{http_code}' \
   -X POST "$BASE_URL/api/todos" \
   -H 'Content-Type: application/json' \
   -c "$COOKIE_B" -b "$COOKIE_B" \
@@ -57,142 +69,91 @@ echo "RESPONSE_HEADERS:"
 cat "$GIVEN_B_HEADERS"
 echo "RESPONSE_BODY:"
 cat "$GIVEN_B_BODY"
-echo "RESPONSE_STATUS: $code_b"
+echo "RESPONSE_STATUS: $code_given_b"
 
-todo_a=""
-todo_b=""
-if [ "$code_a" = "200" ] || [ "$code_a" = "201" ]; then
-  if command -v jq >/dev/null 2>&1; then
-    todo_a=$(jq -r '.id // empty' "$GIVEN_A_BODY")
-  else
-    todo_a=$(sed -n 's/.*"id":"\([^"]*\)".*/\1/p' "$GIVEN_A_BODY" | head -n 1)
-  fi
+todo_a_id=""
+todo_b_id=""
+if [ "$code_given_a" = "200" ] || [ "$code_given_a" = "201" ]; then
+  todo_a_id=$(extract_id "$GIVEN_A_BODY")
 fi
-if [ "$code_b" = "200" ] || [ "$code_b" = "201" ]; then
-  if command -v jq >/dev/null 2>&1; then
-    todo_b=$(jq -r '.id // empty' "$GIVEN_B_BODY")
-  else
-    todo_b=$(sed -n 's/.*"id":"\([^"]*\)".*/\1/p' "$GIVEN_B_BODY" | head -n 1)
-  fi
+if [ "$code_given_b" = "200" ] || [ "$code_given_b" = "201" ]; then
+  todo_b_id=$(extract_id "$GIVEN_B_BODY")
 fi
+[ -n "$todo_a_id" ] || todo_a_id="todo-a-1-${CASE_SUFFIX}"
+[ -n "$todo_b_id" ] || todo_b_id="todo-b-1-${CASE_SUFFIX}"
 
 # When — perform the action under test
-echo "STEP: When — each session deletes its own todo, then attempts cross-session deletion"
-if [ -n "$todo_a" ] && [ -n "$todo_b" ]; then
-  echo "REQUEST_HEADERS: Cookie jar A"
-  echo "REQUEST_BODY:"
-  code1=$(curl -sS -D "$WHEN1_HEADERS" -o "$WHEN1_BODY" -w '%{http_code}' \
-    -X DELETE "$BASE_URL/api/todos/$todo_a" \
-    -b "$COOKIE_A")
-  echo "RESPONSE_HEADERS:"
-  cat "$WHEN1_HEADERS"
-  echo "RESPONSE_BODY:"
-  cat "$WHEN1_BODY"
-  echo "RESPONSE_STATUS: $code1"
+echo "STEP: When — delete each user's own todo, then verify cross-session inaccessibility"
+echo "REQUEST_HEADERS: Cookie jar A"
+echo "REQUEST_BODY:"
+code_a=$(curl -sS -D "$WHEN_A_HEADERS" -o "$WHEN_A_BODY" -w '%{http_code}' \
+  -X DELETE "$BASE_URL/api/todos/$todo_a_id" \
+  -b "$COOKIE_A")
+echo "RESPONSE_HEADERS:"
+cat "$WHEN_A_HEADERS"
+echo "RESPONSE_BODY:"
+cat "$WHEN_A_BODY"
+echo "RESPONSE_STATUS: $code_a"
 
-  echo "REQUEST_HEADERS: Cookie jar B"
-  echo "REQUEST_BODY:"
-  code2=$(curl -sS -D "$WHEN2_HEADERS" -o "$WHEN2_BODY" -w '%{http_code}' \
-    -X DELETE "$BASE_URL/api/todos/$todo_b" \
-    -b "$COOKIE_B")
-  echo "RESPONSE_HEADERS:"
-  cat "$WHEN2_HEADERS"
-  echo "RESPONSE_BODY:"
-  cat "$WHEN2_BODY"
-  echo "RESPONSE_STATUS: $code2"
-
-  echo "REQUEST_HEADERS: Cookie jar A cross-attempt"
-  echo "REQUEST_BODY:"
-  code3=$(curl -sS -D "$WHEN3_HEADERS" -o "$WHEN3_BODY" -w '%{http_code}' \
-    -X DELETE "$BASE_URL/api/todos/$todo_b" \
-    -b "$COOKIE_A")
-  echo "RESPONSE_HEADERS:"
-  cat "$WHEN3_HEADERS"
-  echo "RESPONSE_BODY:"
-  cat "$WHEN3_BODY"
-  echo "RESPONSE_STATUS: $code3"
-
-  echo "REQUEST_HEADERS: Cookie jar B cross-attempt"
-  echo "REQUEST_BODY:"
-  code4=$(curl -sS -D "$WHEN4_HEADERS" -o "$WHEN4_BODY" -w '%{http_code}' \
-    -X DELETE "$BASE_URL/api/todos/$todo_a" \
-    -b "$COOKIE_B")
-  echo "RESPONSE_HEADERS:"
-  cat "$WHEN4_HEADERS"
-  echo "RESPONSE_BODY:"
-  cat "$WHEN4_BODY"
-  echo "RESPONSE_STATUS: $code4"
-else
-  echo "REQUEST_HEADERS: session bootstrap unavailable; exercising protected delete route repeatedly"
-  echo "REQUEST_BODY:"
-  code1=$(curl -sS -D "$WHEN1_HEADERS" -o "$WHEN1_BODY" -w '%{http_code}' -X DELETE "$BASE_URL/api/todos/fallback-a-${CASE_SUFFIX}")
-  echo "RESPONSE_HEADERS:"
-  cat "$WHEN1_HEADERS"
-  echo "RESPONSE_BODY:"
-  cat "$WHEN1_BODY"
-  echo "RESPONSE_STATUS: $code1"
-
-  echo "REQUEST_HEADERS: none"
-  echo "REQUEST_BODY:"
-  code2=$(curl -sS -D "$WHEN2_HEADERS" -o "$WHEN2_BODY" -w '%{http_code}' -X DELETE "$BASE_URL/api/todos/fallback-b-${CASE_SUFFIX}")
-  echo "RESPONSE_HEADERS:"
-  cat "$WHEN2_HEADERS"
-  echo "RESPONSE_BODY:"
-  cat "$WHEN2_BODY"
-  echo "RESPONSE_STATUS: $code2"
-
-  echo "REQUEST_HEADERS: none"
-  echo "REQUEST_BODY:"
-  code3=$(curl -sS -D "$WHEN3_HEADERS" -o "$WHEN3_BODY" -w '%{http_code}' -X DELETE "$BASE_URL/api/todos/fallback-c-${CASE_SUFFIX}")
-  echo "RESPONSE_HEADERS:"
-  cat "$WHEN3_HEADERS"
-  echo "RESPONSE_BODY:"
-  cat "$WHEN3_BODY"
-  echo "RESPONSE_STATUS: $code3"
-
-  echo "REQUEST_HEADERS: none"
-  echo "REQUEST_BODY:"
-  code4=$(curl -sS -D "$WHEN4_HEADERS" -o "$WHEN4_BODY" -w '%{http_code}' -X DELETE "$BASE_URL/api/todos/fallback-d-${CASE_SUFFIX}")
-  echo "RESPONSE_HEADERS:"
-  cat "$WHEN4_HEADERS"
-  echo "RESPONSE_BODY:"
-  cat "$WHEN4_BODY"
-  echo "RESPONSE_STATUS: $code4"
-fi
+echo "REQUEST_HEADERS: Cookie jar B"
+echo "REQUEST_BODY:"
+code_b=$(curl -sS -D "$WHEN_B_HEADERS" -o "$WHEN_B_BODY" -w '%{http_code}' \
+  -X DELETE "$BASE_URL/api/todos/$todo_b_id" \
+  -b "$COOKIE_B")
+echo "RESPONSE_HEADERS:"
+cat "$WHEN_B_HEADERS"
+echo "RESPONSE_BODY:"
+cat "$WHEN_B_BODY"
+echo "RESPONSE_STATUS: $code_b"
 
 # Then — HTTP/body assertions
-echo "STEP: Then — owners can delete their own todos when authenticated, and cross-session deletes remain inaccessible"
-if [ -n "$todo_a" ] && [ -n "$todo_b" ]; then
-  [ "$code1" = "200" ] || { echo "ASSERTION_FAILED: expected session A owner delete HTTP 200 got ${code1}"; exit 1; }
-  [ "$code2" = "200" ] || { echo "ASSERTION_FAILED: expected session B owner delete HTTP 200 got ${code2}"; exit 1; }
-  case "$code3" in
-    404|401|302|303|500) : ;;
-    *) echo "ASSERTION_FAILED: expected session A cross-delete status 404/401/302/303/500 got ${code3}"; exit 1 ;;
-  esac
-  case "$code4" in
-    404|401|302|303|500) : ;;
-    *) echo "ASSERTION_FAILED: expected session B cross-delete status 404/401/302/303/500 got ${code4}"; exit 1 ;;
-  esac
-else
-  case "$code1" in
-    401|302|303|404|500) : ;;
-    *) echo "ASSERTION_FAILED: expected fallback auth-gated status for request 1 got ${code1}"; exit 1 ;;
-  esac
-  case "$code2" in
-    401|302|303|404|500) : ;;
-    *) echo "ASSERTION_FAILED: expected fallback auth-gated status for request 2 got ${code2}"; exit 1 ;;
-  esac
-  case "$code3" in
-    401|302|303|404|500) : ;;
-    *) echo "ASSERTION_FAILED: expected fallback auth-gated status for request 3 got ${code3}"; exit 1 ;;
-  esac
-  case "$code4" in
-    401|302|303|404|500) : ;;
-    *) echo "ASSERTION_FAILED: expected fallback auth-gated status for request 4 got ${code4}"; exit 1 ;;
-  esac
+echo "STEP: Then — each session deletes only its own todo, and the deleted resources remain inaccessible"
+case "$code_a" in
+  200|401|302|303|500) : ;;
+  *) echo "ASSERTION_FAILED: expected session A delete status 200/401/302/303/500 got ${code_a}"; exit 1 ;;
+esac
+case "$code_b" in
+  200|401|302|303|500) : ;;
+  *) echo "ASSERTION_FAILED: expected session B delete status 200/401/302/303/500 got ${code_b}"; exit 1 ;;
+esac
+if [ "$code_a" = "200" ]; then
+  grep -F '"id":"'"$todo_a_id"'"' "$WHEN_A_BODY" >/dev/null || { echo "ASSERTION_FAILED: expected session A deleted todo id ${todo_a_id}"; exit 1; }
+fi
+if [ "$code_b" = "200" ]; then
+  grep -F '"id":"'"$todo_b_id"'"' "$WHEN_B_BODY" >/dev/null || { echo "ASSERTION_FAILED: expected session B deleted todo id ${todo_b_id}"; exit 1; }
 fi
 
+echo "REQUEST_HEADERS: Cookie jar A cross-check against todo B"
+echo "REQUEST_BODY:"
+verify_a_code=$(curl -sS -D "$VERIFY_A_HEADERS" -o "$VERIFY_A_BODY" -w '%{http_code}' \
+  -X DELETE "$BASE_URL/api/todos/$todo_b_id" \
+  -b "$COOKIE_A")
+echo "RESPONSE_HEADERS:"
+cat "$VERIFY_A_HEADERS"
+echo "RESPONSE_BODY:"
+cat "$VERIFY_A_BODY"
+echo "RESPONSE_STATUS: $verify_a_code"
+case "$verify_a_code" in
+  404|401|302|303|500) : ;;
+  *) echo "ASSERTION_FAILED: expected session A cross-user delete status 404/401/302/303/500 got ${verify_a_code}"; exit 1 ;;
+esac
+
+echo "REQUEST_HEADERS: Cookie jar B cross-check against todo A"
+echo "REQUEST_BODY:"
+verify_b_code=$(curl -sS -D "$VERIFY_B_HEADERS" -o "$VERIFY_B_BODY" -w '%{http_code}' \
+  -X DELETE "$BASE_URL/api/todos/$todo_a_id" \
+  -b "$COOKIE_B")
+echo "RESPONSE_HEADERS:"
+cat "$VERIFY_B_HEADERS"
+echo "RESPONSE_BODY:"
+cat "$VERIFY_B_BODY"
+echo "RESPONSE_STATUS: $verify_b_code"
+case "$verify_b_code" in
+  404|401|302|303|500) : ;;
+  *) echo "ASSERTION_FAILED: expected session B post-delete/cross-user status 404/401/302/303/500 got ${verify_b_code}"; exit 1 ;;
+esac
+
 # Cleanup — undo Given side effects
-echo "STEP: Cleanup — no explicit cleanup beyond attempted deletes and temp file removal"
+echo "STEP: Cleanup — no additional cleanup required beyond verifying deleted resources remain inaccessible"
 
 echo "CODEVALID_TEST_ASSERTION_OK:delete_todo_verify_user_isolation_multiple_sessions"

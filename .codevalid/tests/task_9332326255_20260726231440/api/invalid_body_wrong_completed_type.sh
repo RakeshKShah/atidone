@@ -22,8 +22,6 @@ cleanup_files() {
 }
 trap cleanup_files EXIT
 
-cat > "$CREATE_REQUESTBODY_FIX_ME" 2>/dev/null || true
-rm -f "$CREATE_REQUESTBODY_FIX_ME" 2>/dev/null || true
 cat > "$CREATE_REQUEST_BODY" <<JSON
 {"title":"${TODO_TITLE}"}
 JSON
