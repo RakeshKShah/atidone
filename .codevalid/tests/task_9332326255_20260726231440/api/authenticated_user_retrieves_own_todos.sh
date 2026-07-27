@@ -218,8 +218,8 @@ jq -e --arg id "$TODO_ID_1" 'map(select((.id|tostring) == $id)) | length == 1' "
 jq -e --arg id "$TODO_ID_2" 'map(select((.id|tostring) == $id)) | length == 1' "$RESPONSE_BODY" >/dev/null || { echo "ASSERTION_FAILED: expected response to include todo id ${TODO_ID_2}"; exit 1; }
 jq -e --arg title "$TITLE_ONE" 'map(select(.title == $title and ((.completed == false) or (.completed == 0)))) | length == 1' "$RESPONSE_BODY" >/dev/null || { echo "ASSERTION_FAILED: expected first todo to be incomplete"; exit 1; }
 jq -e --arg title "$TITLE_TWO" 'map(select(.title == $title and ((.completed == true) or (.completed == 1)))) | length == 1' "$RESPONSE_BODY" >/dev/null || { echo "ASSERTION_FAILED: expected second todo to be completed"; exit 1; }
-jq -e --arg title "$OTHER_TITLE" 'map(select(.title == $title)) | length == 0' "$RESPONSE_BODY" >/dev/null || { echo "ASSERTION_FAILED: response unexpectedly included another user\'s todo title ${OTHER_TITLE}"; exit 1; }
-jq -e --arg id "$OTHER_TODO_ID" 'map(select((.id|tostring) == $id)) | length == 0' "$RESPONSE_BODY" >/dev/null || { echo "ASSERTION_FAILED: response unexpectedly included another user\'s todo id ${OTHER_TODO_ID}"; exit 1; }
+jq -e --arg title "$OTHER_TITLE" 'map(select(.title == $title)) | length == 0' "$RESPONSE_BODY" >/dev/null || { echo "ASSERTION_FAILED: response unexpectedly included another user's todo title ${OTHER_TITLE}"; exit 1; }
+jq -e --arg id "$OTHER_TODO_ID" 'map(select((.id|tostring) == $id)) | length == 0' "$RESPONSE_BODY" >/dev/null || { echo "ASSERTION_FAILED: response unexpectedly included another user's todo id ${OTHER_TODO_ID}"; exit 1; }
 
 # Cleanup
 
