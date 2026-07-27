@@ -3,14 +3,14 @@ set -eu
 
 BASE_URL="${BASE_URL:-http://app:6713}"
 CASE_SUFFIX="$(date +%s)-$$"
-TEST_ID="create_todo_authenticated_success"
+TEST_ID="create_todo_utf8_whitespace_title_accepted"
 COOKIE_FILE="${COOKIE_FILE:-${AUTH_COOKIE_FILE:-}}"
 REQUEST_BODY_FILE="/tmp/${TEST_ID}_request_${CASE_SUFFIX}.json"
 RESPONSE_HEADERS_FILE="/tmp/${TEST_ID}_response_headers_${CASE_SUFFIX}.txt"
 RESPONSE_BODY_FILE="/tmp/${TEST_ID}_response_body_${CASE_SUFFIX}.txt"
 CLEANUP_HEADERS_FILE="/tmp/${TEST_ID}_cleanup_headers_${CASE_SUFFIX}.txt"
 CLEANUP_BODY_FILE="/tmp/${TEST_ID}_cleanup_body_${CASE_SUFFIX}.txt"
-TITLE="Buy groceries ${CASE_SUFFIX}"
+TITLE="   Buy 超市 groceries 🥑 ${CASE_SUFFIX}  "
 CREATED_ID=""
 
 cleanup_files() {
@@ -27,7 +27,7 @@ echo "PREREQ: validate COOKIE_FILE or AUTH_COOKIE_FILE points to an existing aut
 [ -f "$COOKIE_FILE" ] || { echo "ASSERTION_FAILED: cookie file not found at $COOKIE_FILE"; exit 1; }
 
 # When — perform the action under test
-echo "STEP: When — POST authenticated create todo request"
+echo "STEP: When — POST create todo request with UTF-8 and surrounding whitespace in title"
 echo "REQUEST_HEADERS: Content-Type: application/json; Cookie jar from $COOKIE_FILE"
 echo "REQUEST_BODY:"
 cat "$REQUEST_BODY_FILE"
@@ -45,22 +45,15 @@ cat "$RESPONSE_BODY_FILE"
 echo "RESPONSE_STATUS: $code"
 
 # Then — HTTP/body assertions
-echo "STEP: Then — authenticated user receives created todo object"
+echo "STEP: Then — response preserves the exact title string"
 [ "$code" = "200" ] || [ "$code" = "201" ] || { echo "ASSERTION_FAILED: expected HTTP 200 or 201 got ${code}"; exit 1; }
 if command -v jq >/dev/null 2>&1; then
   CREATED_ID="$(jq -r '.id' "$RESPONSE_BODY_FILE")"
   [ "$CREATED_ID" != "null" ] && [ -n "$CREATED_ID" ] || { echo "ASSERTION_FAILED: expected response id"; exit 1; }
   RESPONSE_TITLE="$(jq -r '.title' "$RESPONSE_BODY_FILE")"
-  [ "$RESPONSE_TITLE" = "$TITLE" ] || { echo "ASSERTION_FAILED: expected title '$TITLE' got '$RESPONSE_TITLE'"; exit 1; }
-  RESPONSE_USER_ID="$(jq -r '.userId' "$RESPONSE_BODY_FILE")"
-  [ "$RESPONSE_USER_ID" != "null" ] && [ -n "$RESPONSE_USER_ID" ] || { echo "ASSERTION_FAILED: expected userId field"; exit 1; }
-  RESPONSE_CREATED_AT="$(jq -r '.createdAt' "$RESPONSE_BODY_FILE")"
-  [ "$RESPONSE_CREATED_AT" != "null" ] && [ -n "$RESPONSE_CREATED_AT" ] || { echo "ASSERTION_FAILED: expected createdAt field"; exit 1; }
+  [ "$RESPONSE_TITLE" = "$TITLE" ] || { echo "ASSERTION_FAILED: expected exact title preservation got '$RESPONSE_TITLE'"; exit 1; }
 else
-  grep -F '"title":"' "$RESPONSE_BODY_FILE" >/dev/null || { echo "ASSERTION_FAILED: expected response body to contain title field"; exit 1; }
-  grep -F "$TITLE" "$RESPONSE_BODY_FILE" >/dev/null || { echo "ASSERTION_FAILED: expected response body to contain created title"; exit 1; }
-  grep -F '"userId":' "$RESPONSE_BODY_FILE" >/dev/null || { echo "ASSERTION_FAILED: expected response body to contain userId field"; exit 1; }
-  grep -F '"createdAt":' "$RESPONSE_BODY_FILE" >/dev/null || { echo "ASSERTION_FAILED: expected response body to contain createdAt field"; exit 1; }
+  grep -F "$TITLE" "$RESPONSE_BODY_FILE" >/dev/null || { echo "ASSERTION_FAILED: expected response body to contain exact UTF-8 title"; exit 1; }
   CREATED_ID="$(sed -n 's/.*"id":"\([^"]*\)".*/\1/p' "$RESPONSE_BODY_FILE" | head -n 1)"
   [ -n "$CREATED_ID" ] || { echo "ASSERTION_FAILED: expected response body to contain id"; exit 1; }
 fi
@@ -82,4 +75,4 @@ if [ -n "$CREATED_ID" ]; then
   [ "$cleanup_code" = "200" ] || { echo "ASSERTION_FAILED: expected cleanup HTTP 200 got ${cleanup_code}"; exit 1; }
 fi
 
-echo "CODEVALID_TEST_ASSERTION_OK:create_todo_authenticated_success"
+echo "CODEVALID_TEST_ASSERTION_OK:create_todo_utf8_whitespace_title_accepted"
