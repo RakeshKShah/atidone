@@ -1,9 +1,10 @@
 node_modules
 .nuxt
 .output
-.data
+.next
 dist
 build
+.data
 coverage
 .env
 .env.local
@@ -15,3 +16,6 @@ db.sqlite-*
 .vercel
 .netlify
 .history
+# Exclude npm lockfile so it can't overwrite pnpm node_modules in the image
+package-lock.json
+npm-shrinkwrap.json
