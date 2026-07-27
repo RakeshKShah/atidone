@@ -1,0 +1,14 @@
+{
+  "service_port": 6713,
+  "health_check_path": "/api/health",
+  "api_base_path": "/api",
+  "api_probe_path": "/api/health",
+  "dependencies": [
+    {
+      "name": "github_oauth",
+      "kind": "http_api",
+      "provisioner": "none",
+      "reason": "GitHub OAuth via env; NuxtHub SQLite (no Postgres/toxiproxy DB)."
+    }
+  ]
+}
