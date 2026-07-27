@@ -2,64 +2,90 @@
 set -eu
 
 BASE_URL="${BASE_URL:-http://app:6713}"
-DATABASE_URL="${DATABASE_URL:-postgresql://postgres:postgres@toxiproxy:5432/app}"
 CASE_SUFFIX="$(date +%s)-$$"
 TEST_ID="delete_non_existent_todo_returns_404"
 COOKIE_JAR="/tmp/${TEST_ID}_cookies_${CASE_SUFFIX}.txt"
-HEADERS_FILE="/tmp/${TEST_ID}_headers_${CASE_SUFFIX}.txt"
-BODY_FILE="/tmp/${TEST_ID}_body_${CASE_SUFFIX}.txt"
-USER_ID="user-test-${CASE_SUFFIX}"
-TODO_ID="nonexistent-todo-999-${CASE_SUFFIX}"
+LOGIN_HEADERS="/tmp/${TEST_ID}_login_headers_${CASE_SUFFIX}.txt"
+LOGIN_BODY="/tmp/${TEST_ID}_login_body_${CASE_SUFFIX}.txt"
+DELETE_HEADERS="/tmp/${TEST_ID}_delete_headers_${CASE_SUFFIX}.txt"
+DELETE_BODY="/tmp/${TEST_ID}_delete_body_${CASE_SUFFIX}.txt"
+LIST_HEADERS="/tmp/${TEST_ID}_list_headers_${CASE_SUFFIX}.txt"
+LIST_BODY="/tmp/${TEST_ID}_list_body_${CASE_SUFFIX}.txt"
+NONEXISTENT_ID="nonexistent-todo-999-${CASE_SUFFIX}"
 
 cleanup_files() {
-  rm -f "$COOKIE_JAR" "$HEADERS_FILE" "$BODY_FILE"
+  rm -f "$COOKIE_JAR" "$LOGIN_HEADERS" "$LOGIN_BODY" "$DELETE_HEADERS" "$DELETE_BODY" "$LIST_HEADERS" "$LIST_BODY"
 }
 trap cleanup_files EXIT
 
 # Given — bring the system to the required state
-printf 'session=%s\n' "$USER_ID" > "$COOKIE_JAR"
-chmod 600 "$COOKIE_JAR"
-
-echo "STEP: Given — seed authenticated user and ensure target todo does not exist"
-echo "PREREQ: inserting user session and deleting any conflicting todo id"
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<SQL
-INSERT INTO users (id) VALUES ('$USER_ID') ON CONFLICT (id) DO NOTHING;
-INSERT INTO sessions (id, user_id, expires_at)
-VALUES ('sess-${CASE_SUFFIX}', '$USER_ID', NOW() + INTERVAL '1 day')
-ON CONFLICT (id) DO UPDATE SET user_id = EXCLUDED.user_id, expires_at = EXCLUDED.expires_at;
-DELETE FROM todos WHERE id = '$TODO_ID';
-SQL
+echo "STEP: Given — establish authenticated session and use a guaranteed-unique nonexistent todo id"
+echo "PREREQ: log in as the test user"
+LOGIN_REQUEST='{"userId":"user-test","name":"User Test"}'
+echo "REQUEST_HEADERS:"
+printf 'Content-Type: application/json\n'
+echo "REQUEST_BODY:"
+printf '%s\n' "$LOGIN_REQUEST"
+login_code="$(curl -sS -X POST \
+  -H 'Content-Type: application/json' \
+  -c "$COOKIE_JAR" \
+  -D "$LOGIN_HEADERS" \
+  -o "$LOGIN_BODY" \
+  -w '%{http_code}' \
+  "$BASE_URL/api/test-auth/login" \
+  --data "$LOGIN_REQUEST")"
+echo "RESPONSE_HEADERS:"
+cat "$LOGIN_HEADERS"
+echo "RESPONSE_BODY:"
+cat "$LOGIN_BODY"
+echo "RESPONSE_STATUS: $login_code"
+[ "$login_code" = "200" ] || { echo "ASSERTION_FAILED: expected HTTP 200 got ${login_code}"; exit 1; }
 
 # When — perform the action under test
-REQUEST_BODY=''
 echo "STEP: When — delete a todo id that does not exist"
 echo "REQUEST_HEADERS:"
-printf 'Cookie: session=%s\n' "$USER_ID"
+printf 'Cookie jar: %s\n' "$COOKIE_JAR"
 echo "REQUEST_BODY:"
-printf '%s\n' "$REQUEST_BODY"
-status_code="$(curl -sS -X DELETE \
+printf '\n'
+delete_code="$(curl -sS -X DELETE \
   -b "$COOKIE_JAR" \
-  -D "$HEADERS_FILE" \
-  -o "$BODY_FILE" \
+  -D "$DELETE_HEADERS" \
+  -o "$DELETE_BODY" \
   -w '%{http_code}' \
-  "$BASE_URL/api/todos/$TODO_ID")"
+  "$BASE_URL/api/todos/$NONEXISTENT_ID")"
 echo "RESPONSE_HEADERS:"
-cat "$HEADERS_FILE"
+cat "$DELETE_HEADERS"
 echo "RESPONSE_BODY:"
-cat "$BODY_FILE"
-echo "RESPONSE_STATUS: $status_code"
+cat "$DELETE_BODY"
+echo "RESPONSE_STATUS: $delete_code"
 
 # Then — HTTP/body assertions
-echo "STEP: Then — response is 404 for missing todo"
-[ "$status_code" = "404" ] || { echo "ASSERTION_FAILED: expected HTTP 404 got ${status_code}"; exit 1; }
-grep -F 'Todo not found' "$BODY_FILE" >/dev/null || { echo "ASSERTION_FAILED: expected Todo not found message in response body"; exit 1; }
+echo "STEP: Then — not found is returned for the nonexistent todo id"
+[ "$delete_code" = "404" ] || { echo "ASSERTION_FAILED: expected HTTP 404 got ${delete_code}"; exit 1; }
+grep -F 'Todo not found' "$DELETE_BODY" >/dev/null || { echo "ASSERTION_FAILED: expected Todo not found message in response body"; exit 1; }
+
+list_code="$(curl -sS -X GET \
+  -b "$COOKIE_JAR" \
+  -D "$LIST_HEADERS" \
+  -o "$LIST_BODY" \
+  -w '%{http_code}' \
+  "$BASE_URL/api/todos")"
+echo "RESPONSE_HEADERS:"
+cat "$LIST_HEADERS"
+echo "RESPONSE_BODY:"
+cat "$LIST_BODY"
+echo "RESPONSE_STATUS: $list_code"
+[ "$list_code" = "200" ] || { echo "ASSERTION_FAILED: expected list HTTP 200 got ${list_code}"; exit 1; }
+if grep -F '"id":"'"$NONEXISTENT_ID"'"' "$LIST_BODY" >/dev/null; then
+  echo "ASSERTION_FAILED: expected nonexistent todo id $NONEXISTENT_ID to remain absent from list"
+  exit 1
+fi
 
 # Cleanup — undo Given side effects
-echo "STEP: Cleanup — remove seeded session and user"
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<SQL
-DELETE FROM todos WHERE id = '$TODO_ID';
-DELETE FROM sessions WHERE id = 'sess-${CASE_SUFFIX}';
-DELETE FROM users WHERE id = '$USER_ID';
-SQL
+echo "STEP: Cleanup — clear authenticated session"
+curl -sS -X POST \
+  -b "$COOKIE_JAR" \
+  -o /dev/null \
+  "$BASE_URL/api/test-auth/logout" >/dev/null 2>&1 || true
 
 echo "CODEVALID_TEST_ASSERTION_OK:delete_non_existent_todo_returns_404"

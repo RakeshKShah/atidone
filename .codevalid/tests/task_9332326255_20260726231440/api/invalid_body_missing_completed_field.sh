@@ -2,71 +2,140 @@
 set -eu
 
 BASE_URL="${BASE_URL:-http://app:6713}"
-DATABASE_URL="${DATABASE_URL:-postgresql://postgres:postgres@toxiproxy:5432/app}"
 CASE_SUFFIX="$(date +%s)-$$"
 TEST_ID="invalid_body_missing_completed_field"
-USER_ID="user-123"
-TODO_ID="todo-456-${CASE_SUFFIX}"
 COOKIE_JAR="/tmp/${TEST_ID}_cookies_${CASE_SUFFIX}.txt"
+LOGIN_HEADERS="/tmp/${TEST_ID}_login_headers_${CASE_SUFFIX}.txt"
+LOGIN_BODY="/tmp/${TEST_ID}_login_body_${CASE_SUFFIX}.txt"
+CREATE_HEADERS="/tmp/${TEST_ID}_create_headers_${CASE_SUFFIX}.txt"
+CREATE_BODY="/tmp/${TEST_ID}_create_body_${CASE_SUFFIX}.txt"
 PATCH_HEADERS="/tmp/${TEST_ID}_patch_headers_${CASE_SUFFIX}.txt"
 PATCH_BODY="/tmp/${TEST_ID}_patch_body_${CASE_SUFFIX}.txt"
-DB_RESULT="/tmp/${TEST_ID}_db_${CASE_SUFFIX}.txt"
-REQUEST_BODY_FILE="/tmp/${TEST_ID}_request_${CASE_SUFFIX}.json"
+LIST_HEADERS="/tmp/${TEST_ID}_list_headers_${CASE_SUFFIX}.txt"
+LIST_BODY="/tmp/${TEST_ID}_list_body_${CASE_SUFFIX}.txt"
+DELETE_HEADERS="/tmp/${TEST_ID}_delete_headers_${CASE_SUFFIX}.txt"
+DELETE_BODY="/tmp/${TEST_ID}_delete_body_${CASE_SUFFIX}.txt"
+LOGIN_REQUEST_BODY="/tmp/${TEST_ID}_login_request_${CASE_SUFFIX}.json"
+CREATE_REQUEST_BODY="/tmp/${TEST_ID}_create_request_${CASE_SUFFIX}.json"
+PATCH_REQUEST_BODY="/tmp/${TEST_ID}_patch_request_${CASE_SUFFIX}.json"
+TODO_TITLE="todo-${TEST_ID}-${CASE_SUFFIX}"
+TODO_ID=""
 
 cleanup_files() {
-  rm -f "$COOKIE_JAR" "$PATCH_HEADERS" "$PATCH_BODY" "$DB_RESULT" "$REQUEST_BODY_FILE"
+  rm -f "$COOKIE_JAR" "$LOGIN_HEADERS" "$LOGIN_BODY" "$CREATE_HEADERS" "$CREATE_BODY" "$PATCH_HEADERS" "$PATCH_BODY" "$LIST_HEADERS" "$LIST_BODY" "$DELETE_HEADERS" "$DELETE_BODY" "$LOGIN_REQUEST_BODY" "$CREATE_REQUEST_BODY" "$PATCH_REQUEST_BODY"
 }
 trap cleanup_files EXIT
 
-SESSION_COOKIE_NAME="${SESSION_COOKIE_NAME:-nuxt-session}"
-SESSION_COOKIE_VALUE="${SESSION_COOKIE_VALUE:-test-session-user-123}"
-printf '%s\n' "# Netscape HTTP Cookie File" > "$COOKIE_JAR"
-printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' app FALSE / FALSE 2147483647 "$SESSION_COOKIE_NAME" "$SESSION_COOKIE_VALUE" >> "$COOKIE_JAR"
+cat > "$LOGIN_REQUEST_BODY" <<JSON
+{"username":"codevalid-${TEST_ID}-${CASE_SUFFIX}","userId":"user-${TEST_ID}-${CASE_SUFFIX}"}
+JSON
 
-echo "STEP: Given — create authenticated user's todo fixture for validation test"
-echo "PREREQ: inserting todo ${TODO_ID} for user ${USER_ID} with completed=0"
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<SQL
-DELETE FROM todos WHERE id = '${TODO_ID}';
-INSERT INTO todos (id, user_id, title, completed) VALUES ('${TODO_ID}', '${USER_ID}', 'Validation seed todo ${CASE_SUFFIX}', 0);
-SQL
+cat > "$CREATE_REQUEST_BODY" <<JSON
+{"title":"${TODO_TITLE}"}
+JSON
 
-cat > "$REQUEST_BODY_FILE" <<JSON
+cat > "$PATCH_REQUEST_BODY" <<JSON
 {}
 JSON
 
-echo "STEP: When — PATCH todo with invalid body missing completed field"
+echo "STEP: Given — bootstrap authenticated session and create a todo for the validation test"
+echo "PREREQ: sign in test user through a repo-provided auth test seam"
 echo "REQUEST_HEADERS: Content-Type: application/json"
-echo "REQUEST_HEADERS: Cookie session prepared via ${COOKIE_JAR}"
 echo "REQUEST_BODY:"
-cat "$REQUEST_BODY_FILE"
+cat "$LOGIN_REQUEST_BODY"
+LOGIN_CODE="$(curl -sS -X POST \
+  -H 'Content-Type: application/json' \
+  -c "$COOKIE_JAR" \
+  -D "$LOGIN_HEADERS" \
+  -o "$LOGIN_BODY" \
+  -w '%{http_code}' \
+  "$BASE_URL/api/test/session" \
+  --data @"$LOGIN_REQUEST_BODY")"
+echo "RESPONSE_HEADERS:"
+cat "$LOGIN_HEADERS"
+echo "RESPONSE_BODY:"
+cat "$LOGIN_BODY"
+echo "RESPONSE_STATUS: ${LOGIN_CODE}"
+[ "$LOGIN_CODE" = "200" ] || [ "$LOGIN_CODE" = "201" ] || { echo "ASSERTION_FAILED: expected HTTP 200 or 201 from session bootstrap got ${LOGIN_CODE}"; exit 1; }
+
+echo "PREREQ: create a todo owned by the authenticated user"
+echo "REQUEST_HEADERS: Content-Type: application/json"
+echo "REQUEST_HEADERS: Cookie jar ${COOKIE_JAR}"
+echo "REQUEST_BODY:"
+cat "$CREATE_REQUEST_BODY"
+CREATE_CODE="$(curl -sS -X POST \
+  -b "$COOKIE_JAR" \
+  -c "$COOKIE_JAR" \
+  -H 'Content-Type: application/json' \
+  -D "$CREATE_HEADERS" \
+  -o "$CREATE_BODY" \
+  -w '%{http_code}' \
+  "$BASE_URL/api/todos" \
+  --data @"$CREATE_REQUEST_BODY")"
+echo "RESPONSE_HEADERS:"
+cat "$CREATE_HEADERS"
+echo "RESPONSE_BODY:"
+cat "$CREATE_BODY"
+echo "RESPONSE_STATUS: ${CREATE_CODE}"
+[ "$CREATE_CODE" = "200" ] || [ "$CREATE_CODE" = "201" ] || { echo "ASSERTION_FAILED: expected HTTP 200 or 201 from create got ${CREATE_CODE}"; exit 1; }
+TODO_ID="$(jq -r '.id // empty' "$CREATE_BODY")"
+[ -n "$TODO_ID" ] || { echo "ASSERTION_FAILED: expected created todo id in response"; exit 1; }
+
+echo "STEP: When — PATCH the todo with an invalid body missing completed"
+echo "REQUEST_HEADERS: Content-Type: application/json"
+echo "REQUEST_HEADERS: Cookie jar ${COOKIE_JAR}"
+echo "REQUEST_BODY:"
+cat "$PATCH_REQUEST_BODY"
 PATCH_CODE="$(curl -sS -X PATCH \
   -b "$COOKIE_JAR" \
+  -c "$COOKIE_JAR" \
   -H 'Content-Type: application/json' \
   -D "$PATCH_HEADERS" \
   -o "$PATCH_BODY" \
   -w '%{http_code}' \
   "$BASE_URL/api/todos/${TODO_ID}" \
-  --data @"$REQUEST_BODY_FILE")"
+  --data @"$PATCH_REQUEST_BODY")"
 echo "RESPONSE_HEADERS:"
 cat "$PATCH_HEADERS"
 echo "RESPONSE_BODY:"
 cat "$PATCH_BODY"
 echo "RESPONSE_STATUS: ${PATCH_CODE}"
 
-echo "STEP: Then — assert validation error and unchanged todo state"
-if [ "$PATCH_CODE" = "400" ] || [ "$PATCH_CODE" = "422" ]; then
-  :
-else
-  echo "ASSERTION_FAILED: expected HTTP 400 or 422 got ${PATCH_CODE}"
-  exit 1
-fi
-grep -F 'completed' "$PATCH_BODY" >/dev/null || grep -F 'validation' "$PATCH_BODY" >/dev/null || grep -F 'Invalid' "$PATCH_BODY" >/dev/null || { echo "ASSERTION_FAILED: expected response body to mention validation failure for completed"; exit 1; }
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "SELECT id || '|' || user_id || '|' || completed FROM todos WHERE id = '${TODO_ID}';" > "$DB_RESULT"
-DB_ROW="$(cat "$DB_RESULT")"
-[ -n "$DB_ROW" ] || { echo "ASSERTION_FAILED: expected database row for ${TODO_ID}"; exit 1; }
-printf '%s' "$DB_ROW" | grep -F "${TODO_ID}|${USER_ID}|0" >/dev/null || { echo "ASSERTION_FAILED: expected database row ${TODO_ID}|${USER_ID}|0 but got ${DB_ROW}"; exit 1; }
+echo "STEP: Then — assert validation failure and unchanged todo state"
+[ "$PATCH_CODE" = "400" ] || [ "$PATCH_CODE" = "422" ] || { echo "ASSERTION_FAILED: expected HTTP 400 or 422 got ${PATCH_CODE}"; exit 1; }
+grep -Ei 'completed|validation|invalid|required' "$PATCH_BODY" >/dev/null || { echo "ASSERTION_FAILED: expected validation response body to mention completed field validation"; exit 1; }
 
-echo "STEP: Cleanup — delete seeded todo row"
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "DELETE FROM todos WHERE id = '${TODO_ID}';"
+LIST_CODE="$(curl -sS \
+  -b "$COOKIE_JAR" \
+  -c "$COOKIE_JAR" \
+  -D "$LIST_HEADERS" \
+  -o "$LIST_BODY" \
+  -w '%{http_code}' \
+  "$BASE_URL/api/todos")"
+echo "RESPONSE_HEADERS:"
+cat "$LIST_HEADERS"
+echo "RESPONSE_BODY:"
+cat "$LIST_BODY"
+echo "RESPONSE_STATUS: ${LIST_CODE}"
+[ "$LIST_CODE" = "200" ] || { echo "ASSERTION_FAILED: expected HTTP 200 from list got ${LIST_CODE}"; exit 1; }
+grep -F '"id":"'"${TODO_ID}"'"' "$LIST_BODY" >/dev/null || { echo "ASSERTION_FAILED: expected list response to contain todo id ${TODO_ID}"; exit 1; }
+grep -F '"completed":false' "$LIST_BODY" >/dev/null || grep -F '"completed":0' "$LIST_BODY" >/dev/null || { echo "ASSERTION_FAILED: expected todo to remain not completed after invalid patch body"; exit 1; }
+
+echo "STEP: Cleanup — delete the todo created during Given"
+if [ -n "$TODO_ID" ]; then
+  DELETE_CODE="$(curl -sS -X DELETE \
+    -b "$COOKIE_JAR" \
+    -c "$COOKIE_JAR" \
+    -D "$DELETE_HEADERS" \
+    -o "$DELETE_BODY" \
+    -w '%{http_code}' \
+    "$BASE_URL/api/todos/${TODO_ID}" || true)"
+  echo "RESPONSE_HEADERS:"
+  cat "$DELETE_HEADERS" 2>/dev/null || true
+  echo "RESPONSE_BODY:"
+  cat "$DELETE_BODY" 2>/dev/null || true
+  echo "RESPONSE_STATUS: ${DELETE_CODE}"
+  [ "$DELETE_CODE" = "200" ] || [ "$DELETE_CODE" = "404" ] || { echo "ASSERTION_FAILED: expected cleanup HTTP 200 or 404 got ${DELETE_CODE}"; exit 1; }
+fi
 
 echo "CODEVALID_TEST_ASSERTION_OK:invalid_body_missing_completed_field"

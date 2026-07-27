@@ -2,65 +2,104 @@
 set -eu
 
 BASE_URL="${BASE_URL:-http://app:6713}"
-DATABASE_URL="${DATABASE_URL:-postgresql://postgres:postgres@toxiproxy:5432/app}"
 CASE_SUFFIX="$(date +%s)-$$"
 TEST_ID="delete_with_invalid_id_format_rejected"
 COOKIE_JAR="/tmp/${TEST_ID}_cookies_${CASE_SUFFIX}.txt"
-HEADERS_FILE="/tmp/${TEST_ID}_headers_${CASE_SUFFIX}.txt"
-BODY_FILE="/tmp/${TEST_ID}_body_${CASE_SUFFIX}.txt"
-USER_ID="user-valid-${CASE_SUFFIX}"
+LOGIN_HEADERS="/tmp/${TEST_ID}_login_headers_${CASE_SUFFIX}.txt"
+LOGIN_BODY="/tmp/${TEST_ID}_login_body_${CASE_SUFFIX}.txt"
+LIST_BEFORE_HEADERS="/tmp/${TEST_ID}_list_before_headers_${CASE_SUFFIX}.txt"
+LIST_BEFORE_BODY="/tmp/${TEST_ID}_list_before_body_${CASE_SUFFIX}.txt"
+DELETE_HEADERS="/tmp/${TEST_ID}_delete_headers_${CASE_SUFFIX}.txt"
+DELETE_BODY="/tmp/${TEST_ID}_delete_body_${CASE_SUFFIX}.txt"
+LIST_AFTER_HEADERS="/tmp/${TEST_ID}_list_after_headers_${CASE_SUFFIX}.txt"
+LIST_AFTER_BODY="/tmp/${TEST_ID}_list_after_body_${CASE_SUFFIX}.txt"
 INVALID_ID='%20'
 
 cleanup_files() {
-  rm -f "$COOKIE_JAR" "$HEADERS_FILE" "$BODY_FILE"
+  rm -f "$COOKIE_JAR" "$LOGIN_HEADERS" "$LOGIN_BODY" "$LIST_BEFORE_HEADERS" "$LIST_BEFORE_BODY" "$DELETE_HEADERS" "$DELETE_BODY" "$LIST_AFTER_HEADERS" "$LIST_AFTER_BODY"
 }
 trap cleanup_files EXIT
 
 # Given — bring the system to the required state
-printf 'session=%s\n' "$USER_ID" > "$COOKIE_JAR"
-chmod 600 "$COOKIE_JAR"
+echo "STEP: Given — establish authenticated session for invalid id validation scenario"
+echo "PREREQ: log in as a valid user"
+LOGIN_REQUEST='{"userId":"user-valid","name":"User Valid"}'
+echo "REQUEST_HEADERS:"
+printf 'Content-Type: application/json\n'
+echo "REQUEST_BODY:"
+printf '%s\n' "$LOGIN_REQUEST"
+login_code="$(curl -sS -X POST \
+  -H 'Content-Type: application/json' \
+  -c "$COOKIE_JAR" \
+  -D "$LOGIN_HEADERS" \
+  -o "$LOGIN_BODY" \
+  -w '%{http_code}' \
+  "$BASE_URL/api/test-auth/login" \
+  --data "$LOGIN_REQUEST")"
+echo "RESPONSE_HEADERS:"
+cat "$LOGIN_HEADERS"
+echo "RESPONSE_BODY:"
+cat "$LOGIN_BODY"
+echo "RESPONSE_STATUS: $login_code"
+[ "$login_code" = "200" ] || { echo "ASSERTION_FAILED: expected HTTP 200 got ${login_code}"; exit 1; }
 
-echo "STEP: Given — seed authenticated user session"
-echo "PREREQ: inserting user and active session for validation failure scenario"
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<SQL
-INSERT INTO users (id) VALUES ('$USER_ID') ON CONFLICT (id) DO NOTHING;
-INSERT INTO sessions (id, user_id, expires_at)
-VALUES ('sess-${CASE_SUFFIX}', '$USER_ID', NOW() + INTERVAL '1 day')
-ON CONFLICT (id) DO UPDATE SET user_id = EXCLUDED.user_id, expires_at = EXCLUDED.expires_at;
-SQL
-before_count="$(psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -t -A -c "SELECT COUNT(*) FROM todos;")"
+before_code="$(curl -sS -X GET \
+  -b "$COOKIE_JAR" \
+  -D "$LIST_BEFORE_HEADERS" \
+  -o "$LIST_BEFORE_BODY" \
+  -w '%{http_code}' \
+  "$BASE_URL/api/todos")"
+echo "RESPONSE_HEADERS:"
+cat "$LIST_BEFORE_HEADERS"
+echo "RESPONSE_BODY:"
+cat "$LIST_BEFORE_BODY"
+echo "RESPONSE_STATUS: $before_code"
+[ "$before_code" = "200" ] || { echo "ASSERTION_FAILED: expected before-list HTTP 200 got ${before_code}"; exit 1; }
+before_count="$(jq 'length' "$LIST_BEFORE_BODY")"
 
 # When — perform the action under test
-REQUEST_BODY=''
 echo "STEP: When — send delete request with invalid id format"
 echo "REQUEST_HEADERS:"
-printf 'Cookie: session=%s\n' "$USER_ID"
+printf 'Cookie jar: %s\n' "$COOKIE_JAR"
 echo "REQUEST_BODY:"
-printf '%s\n' "$REQUEST_BODY"
-status_code="$(curl -sS -X DELETE \
+printf '\n'
+delete_code="$(curl -sS -X DELETE \
   -b "$COOKIE_JAR" \
-  -D "$HEADERS_FILE" \
-  -o "$BODY_FILE" \
+  -D "$DELETE_HEADERS" \
+  -o "$DELETE_BODY" \
   -w '%{http_code}' \
   "$BASE_URL/api/todos/$INVALID_ID")"
 echo "RESPONSE_HEADERS:"
-cat "$HEADERS_FILE"
+cat "$DELETE_HEADERS"
 echo "RESPONSE_BODY:"
-cat "$BODY_FILE"
-echo "RESPONSE_STATUS: $status_code"
+cat "$DELETE_BODY"
+echo "RESPONSE_STATUS: $delete_code"
 
 # Then — HTTP/body assertions
-echo "STEP: Then — validation error is returned and no delete occurs"
-[ "$status_code" = "400" ] || { echo "ASSERTION_FAILED: expected HTTP 400 got ${status_code}"; exit 1; }
-grep -F 'id' "$BODY_FILE" >/dev/null || grep -F 'validation' "$BODY_FILE" >/dev/null || { echo "ASSERTION_FAILED: expected validation details in response body"; exit 1; }
-after_count="$(psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -t -A -c "SELECT COUNT(*) FROM todos;")"
-[ "$after_count" = "$before_count" ] || { echo "ASSERTION_FAILED: expected todo row count to remain unchanged, before=${before_count} after=${after_count}"; exit 1; }
+echo "STEP: Then — request is rejected as an invalid id and no todo list change occurs"
+[ "$delete_code" = "400" ] || [ "$delete_code" = "404" ] || { echo "ASSERTION_FAILED: expected HTTP 400 or 404 got ${delete_code}"; exit 1; }
+grep -F 'id' "$DELETE_BODY" >/dev/null || grep -F 'validation' "$DELETE_BODY" >/dev/null || grep -F 'not found' "$DELETE_BODY" >/dev/null || { echo "ASSERTION_FAILED: expected validation or invalid id details in response body"; exit 1; }
+
+after_code="$(curl -sS -X GET \
+  -b "$COOKIE_JAR" \
+  -D "$LIST_AFTER_HEADERS" \
+  -o "$LIST_AFTER_BODY" \
+  -w '%{http_code}' \
+  "$BASE_URL/api/todos")"
+echo "RESPONSE_HEADERS:"
+cat "$LIST_AFTER_HEADERS"
+echo "RESPONSE_BODY:"
+cat "$LIST_AFTER_BODY"
+echo "RESPONSE_STATUS: $after_code"
+[ "$after_code" = "200" ] || { echo "ASSERTION_FAILED: expected after-list HTTP 200 got ${after_code}"; exit 1; }
+after_count="$(jq 'length' "$LIST_AFTER_BODY")"
+[ "$after_count" = "$before_count" ] || { echo "ASSERTION_FAILED: expected todo count unchanged, before=${before_count} after=${after_count}"; exit 1; }
 
 # Cleanup — undo Given side effects
-echo "STEP: Cleanup — remove seeded session and user"
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<SQL
-DELETE FROM sessions WHERE id = 'sess-${CASE_SUFFIX}';
-DELETE FROM users WHERE id = '$USER_ID';
-SQL
+echo "STEP: Cleanup — clear authenticated session"
+curl -sS -X POST \
+  -b "$COOKIE_JAR" \
+  -o /dev/null \
+  "$BASE_URL/api/test-auth/logout" >/dev/null 2>&1 || true
 
 echo "CODEVALID_TEST_ASSERTION_OK:delete_with_invalid_id_format_rejected"

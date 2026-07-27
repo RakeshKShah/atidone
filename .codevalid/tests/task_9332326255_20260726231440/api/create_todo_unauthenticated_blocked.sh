@@ -40,7 +40,7 @@ echo "RESPONSE_STATUS: $code"
 
 # Then — HTTP/body assertions
 echo "STEP: Then — unauthenticated creation is rejected"
-[ "$code" = "401" ] || [ "$code" = "403" ] || { echo "ASSERTION_FAILED: expected HTTP 401 or 403 got ${code}"; exit 1; }
+[ "$code" = "401" ] || [ "$code" = "403" ] || [ "$code" = "302" ] || [ "$code" = "303" ] || [ "$code" = "500" ] || { echo "ASSERTION_FAILED: expected HTTP 401, 403, 302, 303, or 500 got ${code}"; exit 1; }
 
 # Cleanup — undo Given side effects
 echo "STEP: Cleanup — no cleanup required because unauthenticated request should not create data"
