@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@iconify-json/lucide": "^1.2.92",
+    "tailwindcss": "^4.0.0",
     "@iconify-json/simple-icons": "^1.2.71",
     "@libsql/client": "^0.17.0",
     "@nuxt/ui": "^4.4.0",
