@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
+# .codevalid/entrypoint.sh
 set -euo pipefail
-if [[ -n "${WAIT_FOR_TCP:-}" ]]; then
-  host="${WAIT_FOR_TCP%%:*}"
-  port="${WAIT_FOR_TCP##*:}"
-  echo "Waiting for $host:$port"
-  for i in $(seq 1 60); do
-    if nc -z "$host" "$port" 2>/dev/null; then break; fi
-    sleep 1
-  done
-fi
+
+# 1. Wait for each dependency *through toxiproxy* (host:port pairs from env).
+for hp in ${WAIT_FOR_TCP:-}; do
+  host="${hp%%:*}"; port="${hp##*:}"
+  echo "waiting for ${host}:${port} ..."
+  until nc -z "$host" "$port"; do sleep 1; done
+done
+
+# 2. Run migrations (Drizzle).
+${MIGRATE_CMD:-true}
+
+# 3. Hand off to the real server on 6713.
 exec "$@"

@@ -1,7 +1,6 @@
-FROM alpine:3.20
-ARG CACHEBUST=1
-RUN echo "cachebust=${CACHEBUST}" \
-    && apk add --no-cache curl jq bash ca-certificates
+FROM node:22-bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl jq ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /work
 COPY seed_test_cases ./seed_test_cases
-COPY tests ./tests
