@@ -10,6 +10,19 @@ export default eventHandler(async (event) => {
   const { id } = await getValidatedRouterParams(event, ParamsSchema.parse)
   const { user } = await requireUserSession(event)
 
+  const mocked = readCodevalidMockTodos(event)
+  if (mocked) {
+    const idx = mocked.findIndex(
+      (todo) => Number(todo.id) === id && (!todo.userId || Number(todo.userId) === Number(user.id)),
+    )
+    if (idx < 0) {
+      throw createError({ statusCode: 404, message: 'Todo not found' })
+    }
+    const deletedTodo = mocked[idx]
+    writeCodevalidMockTodos(event, mocked.filter((_, i) => i !== idx))
+    return deletedTodo
+  }
+
   // Delete todo for the current user
   const deletedTodos = await db.delete(schema.todos).where(
     and(
