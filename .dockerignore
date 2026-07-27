@@ -1,0 +1,17 @@
+node_modules
+.nuxt
+.output
+.data
+dist
+build
+coverage
+.env
+.env.local
+.env.*.local
+*.log
+db.sqlite
+db.sqlite-*
+.wrangler
+.vercel
+.netlify
+.history
