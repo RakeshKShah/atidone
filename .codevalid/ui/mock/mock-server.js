@@ -2,24 +2,22 @@
  * Mock server for Atidone UI tests.
  *
  * Usage in a test file:
- *   import { setupMocks } from "../mock/mock-server.js";
+ *   import { setupMocks, mockAuthenticatedUser, mockTodos } from "../mock/mock-server.js";
  *
- *   test.beforeEach(async ({ page }) => {
- *     await setupMocks(page);
- *   });
- *
- * All mock route payloads live here. Test files must not embed payloads —
- * only call setupMocks() (or individual route helpers exported below).
+ * Authenticated flows must call `mockAuthenticatedUser` (or helpers in
+ * `helpers/mock-api.js`) so a real nuxt-auth-utils session cookie is set.
+ * Route-only session mocks are not enough for SSR `middleware: 'auth'`.
  */
 
+const TEST_SESSION_URL = "/api/__codevalid__/test-session";
+
 /**
- * Install all standard mock routes on the given Playwright Page via
- * route interception. Call this in a beforeEach hook.
+ * Install baseline mocks (OAuth stub + empty todos). Does not force an
+ * unauthenticated session cookie — call {@link clearTestSession} when needed.
  *
  * @param {import("@playwright/test").Page} page
  */
 export async function setupMocks(page) {
-  // Mock: GitHub OAuth redirect — return immediately so tests never leave the app
   await page.route("**/api/auth/github", (route) => {
     route.fulfill({
       status: 302,
@@ -28,7 +26,6 @@ export async function setupMocks(page) {
     });
   });
 
-  // Mock: Todo list API (empty list for unauthenticated seed state)
   await page.route("**/api/todos*", (route) => {
     route.fulfill({
       status: 200,
@@ -36,41 +33,65 @@ export async function setupMocks(page) {
       body: JSON.stringify([]),
     });
   });
-
-  // Mock: User session — unauthenticated by default
-  await page.route("**/api/_auth/session", (route) => {
-    route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ loggedIn: false, user: null }),
-    });
-  });
 }
 
 /**
- * Set up an authenticated user session mock.
- * Call after setupMocks() to override the session endpoint.
- *
+ * Clear any sealed session cookie via the test-only session endpoint.
  * @param {import("@playwright/test").Page} page
- * @param {{ login: string }} user
  */
-export async function mockAuthenticatedUser(page, user = { login: "testuser" }) {
+export async function clearTestSession(page) {
+  const response = await page.request.post(TEST_SESSION_URL, {
+    data: { clear: true },
+  });
+  if (!response.ok()) {
+    throw new Error(
+      `clearTestSession failed: HTTP ${response.status()} ${await response.text()}`
+    );
+  }
+}
+
+/**
+ * Establish a real authenticated session cookie for SSR middleware, then
+ * keep a client-visible session payload in sync for hydration.
+ *
+ * @param {import("@playwright/test").Page} page
+ * @param {{ id?: number, login?: string }} user
+ */
+export async function mockAuthenticatedUser(page, user = { login: "testuser", id: 10 }) {
+  const payload = {
+    id: Number(user.id ?? 10),
+    login: String(user.login ?? "testuser"),
+  };
+
+  // Drop any prior session route mock so the sealed cookie wins for SSR.
+  await page.unroute("**/api/_auth/session").catch(() => {});
+
+  const response = await page.request.post(TEST_SESSION_URL, {
+    data: { user: payload },
+  });
+  if (!response.ok()) {
+    throw new Error(
+      `mockAuthenticatedUser failed: HTTP ${response.status()} ${await response.text()}`
+    );
+  }
+
   await page.route("**/api/_auth/session", (route) => {
     route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ loggedIn: true, user }),
+      body: JSON.stringify({ loggedIn: true, user: payload }),
     });
   });
 }
 
 /**
- * Set up a mocked todo list response.
+ * Set up a mocked todo list response (overrides the empty list from setupMocks).
  *
  * @param {import("@playwright/test").Page} page
- * @param {Array<{id: number, title: string, completed: boolean}>} todos
+ * @param {Array<Record<string, unknown>>} todos
  */
 export async function mockTodos(page, todos = []) {
+  await page.unroute("**/api/todos*").catch(() => {});
   await page.route("**/api/todos*", (route) => {
     route.fulfill({
       status: 200,
