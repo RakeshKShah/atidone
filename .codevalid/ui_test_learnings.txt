@@ -1,0 +1,89 @@
+## Issues fixed
+
+**1. ES module syntax error — `Cannot use 'import.meta' outside a module`**
+- What failed: Container ENTRYPOINT crashed immediately; Node loaded `playwright.config.js` as CommonJS because `package.json` lacked `"type": "module"`.
+- Root cause: All files under `.codevalid/ui/` (config, helpers, global-teardown) use ES module syntax (`import`, `export`, `import.meta.url`). Without `"type": "module"` in the root `package.json`, Node treats `.js` files as CJS.
+- Fix: Added `"type": "module"` to `package.json`. Files touched: `package.json`.
+
+**2. Missing `@playwright/test` package**
+- What failed: After fixing the ESM issue, container crashed with `Cannot find package '@playwright/test'`.
+- Root cause: Only `playwright` was installed as a devDependency. With pnpm's strict isolation, `playwright` does not automatically expose `@playwright/test` as a resolvable import — they are separate packages. The config imports `from "@playwright/test"`.
+- Fix: Installed `@playwright/test` as a devDependency (`pnpm add -D @playwright/test`). Files touched: `package.json`, `pnpm-lock.yaml`.
+
+**3. Wrong fallback Playwright project name — `Project(s) "codevalid-sample-test" not found`**
+- What failed: The CodeValid platform appends `--project codevalid-sample-test` when invoking the container. The onboarding session had renamed the fallback project to `"codevalid-seed-test"`, so Playwright exited before running any tests.
+- Root cause: The platform hard-codes `--project codevalid-sample-test` externally; the config's fallback project name must match exactly.
+- Fix: Renamed the fallback project back to `"codevalid-sample-test"` in `buildTaskProjects()`, updated `outputDir` and `reportDir` fallback key from `"seed_test"` to `"sample_test_cases"`. `testDir` remains `.codevalid/ui/seed_test/`. Files touched: `.codevalid/ui/playwright.config.js`.
+
+**4. Inline comment inside `apt-get` package list (latent risk)**
+- What failed: Did not cause a failure in this repo (Bookworm parses it), but the `# Chromium runtime deps` inline comment inside the `RUN apt-get install` continuation block is non-standard and was removed for safety.
+- Fix: Removed the inline comment from the Dockerfile.
+
+**5. Spurious CJS `require()` check for AWS SDK (latent bug)**
+- What failed: Dockerfile had `node -e "require('@aws-sdk/client-s3')"` as a guard, but with `"type": "module"` set, CJS `require()` of an ESM-only package would always throw, causing the conditional install to run every build.
+- Fix: Removed the check entirely — `pnpm install --frozen-lockfile` already installs all devDeps including the AWS SDK packages.
+
+
+## Import and config reference paths
+
+**Playwright config (read first on every task):**
+- `.codevalid/ui/playwright.config.js` — defines webServer, baseURL, projects, reporters, globalTeardown, trace/video/screenshot settings.
+
+**Helpers (import, do not rewrite):**
+- `.codevalid/ui/helpers/execution-recorder.js` — `ExecutionRecorder` class; construct with `{ testId, testTitle }` or `(id, title)`; call `.record()`, `.step()`, `.save(testInfo)` in tests.
+- `.codevalid/ui/helpers/task-folder.js` — `getTaskFolders`, `getTaskRecordingsDir`, `getTaskFolderFromPath`, `resolveReportTaskFolder`, `discoverTaskRecordingsDirs`, `getRunResultsDir`.
+- `.codevalid/ui/helpers/upload-recordings-to-s3.js` — `uploadRecordingsToS3(options?)`. Called by global-teardown; also runnable standalone. Do not modify internals.
+- `.codevalid/ui/helpers/print-execution-results.js` — `printExecutionResults()`, `writeSuiteResultFiles()`. Called by global-teardown. Do not modify.
+
+**Global teardown (wire-only, do not rewrite):**
+- `.codevalid/ui/global-teardown.js` — calls `printExecutionResults()` then `uploadRecordingsToS3()`. Already correct; no changes needed.
+
+**Seed test (reference for new tests):**
+- `.codevalid/ui/seed_test/seed_test.js` — uses `ExecutionRecorder`, imports mock helpers; tests use `testMatch: "**/*.js"`.
+
+**Mock helpers:**
+- `.codevalid/ui/mock/mock-server.js` — exports `setupMocks(page)`, `mockAuthenticatedUser(page, user)`, `mockTodos(page, todos)`. Uses Playwright route interception (no real server). Import in test `beforeEach`.
+
+**Dockerfile:**
+- `.codevalid/ui/Dockerfile` — build context is repo root. Installs pnpm, runs `pnpm install --frozen-lockfile --ignore-scripts`, installs Playwright Chromium, copies source, runs `nuxt prepare` then `nuxt build`. ENTRYPOINT is the exact required string; do not change.
+
+**Package manager:** pnpm 10.30.1. All installs use `pnpm add -D`. The `--legacy-peer-deps` flag does not exist in pnpm — it is npm-only. Use bare `pnpm add -D` instead.
+
+
+## Conventions to preserve
+
+**Project name:** The fallback Playwright project (no task folders present) MUST be named `"codevalid-sample-test"`. The platform appends `--project codevalid-sample-test` externally. Never rename this.
+
+**testDir vs testMatch split:**
+- Fallback project (seed/sample): `testDir = .codevalid/ui/seed_test/`, `testMatch: "**/*.js"`.
+- Task projects: `testDir = .codevalid/ui/test/<task_folder>/`, `testMatch: "**/*.spec.js"`.
+- Top-level config `testMatch` is `"**/*.spec.js"` (task tests only); the fallback project overrides this per-project.
+
+**Recording/output directories:** All recordings land under `.codevalid/ui/recording/<taskFolder>/`. Never hardcode paths — always use `getTaskRecordingsDir(uiRoot, taskFolder)` from `task-folder.js`.
+
+**App start command (CI vs local):**
+- CI (inside container, `process.env.CI` is set): `node .output/server/index.mjs` — serves the pre-built Nuxt output.
+- Local dev: `npx nuxi dev --port 3000`.
+- Port is always 3000. `baseURL` and `webServer.url` are both `http://localhost:3000`.
+
+**webServer env:** Must pass `PORT: "3000"`, `HOST: "0.0.0.0"`, `NODE_ENV: "production"` in `webServer.env` so Nitro binds on all interfaces.
+
+**ESM:** The entire project is ESM (`"type": "module"` in `package.json`). All `.js` files under `.codevalid/ui/` use `import`/`export`. Never use `require()`.
+
+**Mock placement:** All mock payloads and route stubs live in `.codevalid/ui/mock/`. Test files import from there; they never embed payloads inline.
+
+**Reporters:** Config always registers three reporters: `list`, `html` (to `<recordingsDir>/report`), and `json` (to `<recordingsDir>/test-results.json`). The ENTRYPOINT adds `--reporter=json` as an override; this is expected and harmless.
+
+**pnpm onlyBuiltDependencies:** The `package.json` pnpm section lists packages allowed to run build scripts. Do not remove entries from this list.
+
+
+## Do not repeat
+
+- Do not install only `playwright` without also installing `@playwright/test` — both are required as separate devDependencies in a pnpm workspace.
+- Do not use `--legacy-peer-deps` with pnpm — it is an npm-only flag and will error. Use bare `pnpm add -D <pkg>`.
+- Do not rename the fallback Playwright project away from `"codevalid-sample-test"` — the platform passes this name externally via `--project` and the run will fail instantly if it does not match.
+- Do not add `"type": "module"` check to `package.json` last — it must be present before any `node` invocation of the ESM config files, including inside Docker.
+- Do not use `node -e "require(...)"` to check for ESM packages in the Dockerfile — it will always fail under `"type": "module"` and trigger unnecessary re-installs.
+- Do not put inline `#` comments inside a multi-line `apt-get install` package list — while it works on some Debian versions, it is fragile and should be avoided.
+- Do not use `--force` for npm/pnpm installs; `--legacy-peer-deps` (npm only) is the correct peer-dep escape hatch, but for pnpm simply omit it.
+- Do not copy `node_modules` into the Docker build context — add a `.dockerignore` excluding `node_modules` and `.output` to avoid 400MB+ context transfers that slow every build.

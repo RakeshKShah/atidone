@@ -1,0 +1,54 @@
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: .codevalid/Dockerfile
+    environment:
+      PORT: "6713"
+      WAIT_FOR_TCP: ""
+      MIGRATE_CMD: "true"
+      NUXT_OAUTH_GITHUB_CLIENT_ID: ""
+      NUXT_OAUTH_GITHUB_CLIENT_SECRET: ""
+      NUXT_SESSION_PASSWORD: "codevalid-test-session-password-32chars"
+    ports:
+      - "6713:6713"
+    depends_on:
+      toxiproxy:
+        condition: service_healthy
+    networks: [codevalid]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6713/api/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 30s
+
+  toxiproxy:
+    build:
+      context: ./toxiproxy
+      dockerfile: Dockerfile
+    command: ["-host=0.0.0.0", "-config=/config/toxiproxy.json"]
+    ports:
+      - "8474:8474"
+    healthcheck:
+      test: ["CMD", "/bin/busybox", "wget", "-q", "-O", "/dev/null", "http://localhost:8474/version"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+    networks: [codevalid]
+
+  seed-test:
+    profiles: ["test"]
+    build:
+      context: .
+      dockerfile: seed-test.Dockerfile
+    environment:
+      HEALTH_URL: "http://app:6713/api/health"
+    depends_on:
+      app:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "seed_test_cases/health_check.sh"]
+    networks: [codevalid]
+
+networks:
+  codevalid:

@@ -1,0 +1,11 @@
+{
+  "service_port": 6713,
+  "dependencies": [
+    {
+      "name": "github_oauth",
+      "kind": "http_api",
+      "provisioner": "none",
+      "reason": "GitHub OAuth relies on NUXT_OAUTH_GITHUB_CLIENT_ID/SECRET env vars; the handler redirects on success and the endpoint is not exercised during boot/health. No base-URL seam available without editing application business logic."
+    }
+  ]
+}

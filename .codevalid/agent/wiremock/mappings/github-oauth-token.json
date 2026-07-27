@@ -1,0 +1,17 @@
+{
+  "request": {
+    "method": "POST",
+    "urlPath": "/login/oauth/access_token"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "access_token": "gho_mock_token_1234567890",
+      "token_type": "bearer",
+      "scope": "read:user,user:email"
+    }
+  }
+}
