@@ -87,59 +87,16 @@ export async function mockAuthenticatedUser(page, user = { login: "testuser", id
 /**
  * Set up a mocked todo list response (overrides the empty list from setupMocks).
  *
- * Also sets the `codevalid_mock_todos` cookie so that Nuxt SSR-side fetches
- * (which bypass page.route) pick up the same fixture data via
- * `readCodevalidMockTodos` in the server API handlers.
- *
  * @param {import("@playwright/test").Page} page
  * @param {Array<Record<string, unknown>>} todos
  */
 export async function mockTodos(page, todos = []) {
   await page.unroute("**/api/todos*").catch(() => {});
   await page.route("**/api/todos*", (route) => {
-    // Only intercept GET (list) requests; let mutating requests through to the
-    // cookie-backed mock handlers so writes update the SSR cookie too.
-    if (route.request().method().toUpperCase() === "GET") {
-      route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify(todos),
-      });
-    } else {
-      route.continue();
-    }
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(todos),
+    });
   });
-
-  // Set the server-readable cookie so Nuxt SSR `$fetch('/api/todos')` calls
-  // (which are server-to-server and bypass page.route) return the same data.
-  const cookieValue = encodeURIComponent(JSON.stringify(todos));
-  // Derive the hostname from the current page URL, falling back to the
-  // playwright baseURL context option, then to localhost.
-  let hostname = "localhost";
-  try {
-    const rawUrl = page.url();
-    if (rawUrl && rawUrl.startsWith("http")) {
-      hostname = new URL(rawUrl).hostname;
-    } else {
-      const ctx = page.context();
-      const ctxOptions = /** @type {any} */ (ctx)._options;
-      const base = ctxOptions?.baseURL;
-      if (base && base.startsWith("http")) {
-        hostname = new URL(base).hostname;
-      }
-    }
-  } catch {
-    // fallback to localhost
-  }
-  await page.context().addCookies([
-    {
-      name: "codevalid_mock_todos",
-      value: cookieValue,
-      domain: hostname,
-      path: "/",
-      sameSite: "Lax",
-      httpOnly: false,
-      secure: false,
-    },
-  ]);
 }
