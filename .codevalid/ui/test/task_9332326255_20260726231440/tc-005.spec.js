@@ -19,6 +19,7 @@ test("tc-005 Create a todo from the UI", async ({ page }, testInfo) => {
           createdAt: "2026-07-26T10:00:00.000Z",
         },
       ],
+      createDelayMs: 1,
     });
   });
 
@@ -37,7 +38,7 @@ test("tc-005 Create a todo from the UI", async ({ page }, testInfo) => {
   });
 
   await recorder.step("Assert the new todo appears in the list", async () => {
-    await expect(page.getByText("Write Playwright coverage")).toBeVisible();
+    await expect(page.getByText("Write Playwright coverage", { exact: true })).toBeVisible();
     await expect(page.locator('[name="todo"]')).toHaveValue("");
   });
 
