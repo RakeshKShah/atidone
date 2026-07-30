@@ -87,12 +87,35 @@ export async function mockAuthenticatedUser(page, user = { login: "testuser", id
 /**
  * Set up a mocked todo list response (overrides the empty list from setupMocks).
  *
+ * Also writes the `codevalid_mock_todos` cookie so that Nuxt SSR handlers can
+ * read the fixture via `readCodevalidMockTodos()` — `page.route` only intercepts
+ * browser-side requests and cannot intercept the server-side `$fetch` call that
+ * SSR makes when rendering the page.
+ *
  * @param {import("@playwright/test").Page} page
  * @param {Array<Record<string, unknown>>} todos
  */
 export async function mockTodos(page, todos = []) {
+  // Write the cookie so SSR can read the fixture on server-side renders.
+  const cookieValue = encodeURIComponent(JSON.stringify(todos));
+  await page.context().addCookies([
+    {
+      name: "codevalid_mock_todos",
+      value: cookieValue,
+      domain: "localhost",
+      path: "/",
+      sameSite: "Lax",
+      httpOnly: false,
+      secure: false,
+    },
+  ]);
+
+  // Also intercept client-side requests so re-fetches after hydration are mocked.
   await page.unroute("**/api/todos*").catch(() => {});
   await page.route("**/api/todos*", (route) => {
+    if (route.request().method().toUpperCase() !== "GET") {
+      return route.continue();
+    }
     route.fulfill({
       status: 200,
       contentType: "application/json",
