@@ -87,35 +87,28 @@ export async function mockAuthenticatedUser(page, user = { login: "testuser", id
 /**
  * Set up a mocked todo list response (overrides the empty list from setupMocks).
  *
- * Also sets the `codevalid_mock_todos` cookie so Nuxt SSR handlers read the
- * fixture instead of the real database. Playwright `page.route` only intercepts
- * browser-initiated fetch calls; the server-side `useRequestFetch` in
- * `useQuery(todosQuery)` hits the Nitro API directly and therefore needs the
- * cookie path.
+ * Also sets the `codevalid_mock_todos` cookie so Nuxt SSR handlers return the
+ * fixture instead of hitting the real DB (Playwright `page.route` cannot
+ * intercept server-side `$fetch` calls during SSR rendering).
  *
  * @param {import("@playwright/test").Page} page
  * @param {Array<Record<string, unknown>>} todos
  */
 export async function mockTodos(page, todos = []) {
-  // Set the SSR cookie so server-side handlers return the fixture list.
-  const cookieValue = encodeURIComponent(JSON.stringify(todos));
+  // Set the SSR-visible cookie so the server-side handler returns fixtures.
   await page.context().addCookies([
     {
       name: "codevalid_mock_todos",
-      value: cookieValue,
-      domain: "localhost",
-      path: "/",
-      httpOnly: false,
+      value: encodeURIComponent(JSON.stringify(todos)),
+      url: "http://localhost:3000",
       sameSite: "Lax",
+      httpOnly: false,
     },
   ]);
 
-  // Keep the client-side route mock so client navigations are also covered.
+  // Also intercept client-side GET requests (hydration / client refetch).
   await page.unroute("**/api/todos*").catch(() => {});
   await page.route("**/api/todos*", (route) => {
-    if (route.request().method().toUpperCase() !== "GET") {
-      return route.continue();
-    }
     route.fulfill({
       status: 200,
       contentType: "application/json",
